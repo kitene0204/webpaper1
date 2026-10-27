@@ -380,6 +380,19 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 })}
               </span>
             </div>
+
+            {/* High-Visibility Callout Button for Students */}
+            {!board.is_locked && !isDdayLocked && (
+              <div className="mt-4 mb-2 flex justify-center">
+                <button
+                  onClick={() => setIsCreateOpen(true)}
+                  className="px-6 py-3 rounded-full bg-gradient-to-r from-amber-400 to-amber-300 hover:from-amber-300 hover:to-amber-200 text-amber-950 font-black text-sm sm:text-base shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105 active:scale-95 flex items-center gap-2.5 border-2 border-white/60 cursor-pointer"
+                >
+                  <span className="text-xl">✍️</span>
+                  <span>{board.target_name}님에게 포스트잇 남기기 (글쓰기)</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Empty State */}

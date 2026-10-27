@@ -44,10 +44,53 @@ export async function getBoards(): Promise<Board[]> {
   }
 }
 
+export async function saveBoardLocally(board: Board): Promise<void> {
+  const boards = await getBoards();
+  const existingIdx = boards.findIndex((b) => b.board_id === board.board_id);
+  if (existingIdx !== -1) {
+    boards[existingIdx] = { ...boards[existingIdx], ...board };
+  } else {
+    boards.unshift(board);
+  }
+  localStorage.setItem(BOARDS_KEY, JSON.stringify(boards));
+}
+
 export async function getBoard(boardId: string): Promise<Board | null> {
   const boards = await getBoards();
-  const board = boards.find((b) => b.board_id === boardId);
-  return board || null;
+  let board = boards.find((b) => b.board_id === boardId);
+  if (board) return board;
+
+  // If not found locally, try fetching from Google Apps Script if URL is configured
+  const gasUrl = getGlobalGasUrl();
+  if (gasUrl) {
+    try {
+      const fetchUrl = gasUrl.includes('?')
+        ? `${gasUrl}&action=getBoard&board_id=${encodeURIComponent(boardId)}`
+        : `${gasUrl}?action=getBoard&board_id=${encodeURIComponent(boardId)}`;
+      const res = await fetch(fetchUrl);
+      const data = await res.json();
+      if (data && data.success && data.board) {
+        const remoteBoard: Board = {
+          board_id: data.board.board_id || boardId,
+          target_name: data.board.target_name || '선생님',
+          title: data.board.title || '롤링페이퍼',
+          category: data.board.category || 'teacher',
+          theme_id: data.board.theme_id || 'chalkboard_green',
+          password: String(data.board.password || '1234'),
+          is_locked: data.board.is_locked === true || String(data.board.is_locked).toUpperCase() === 'TRUE',
+          open_at: data.board.open_at || new Date().toISOString(),
+          created_at: data.board.created_at || new Date().toISOString(),
+          gas_url: gasUrl,
+        };
+        await saveBoardLocally(remoteBoard);
+        return remoteBoard;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch board from GAS:', e);
+    }
+  }
+
+  return null;
 }
 
 export async function createBoard(newBoard: Omit<Board, 'board_id' | 'created_at'>): Promise<Board> {
@@ -151,9 +194,56 @@ async function getRawMessages(): Promise<Message[]> {
   }
 }
 
-export async function getMessages(boardId: string): Promise<Message[]> {
+export async function getMessages(boardId: string, gasUrl?: string): Promise<Message[]> {
   const all = await getRawMessages();
-  return all.filter((m) => m.board_id === boardId && !m.is_deleted);
+  let localMessages = all.filter((m) => m.board_id === boardId && !m.is_deleted);
+
+  // Try fetching from Google Apps Script if gasUrl is available
+  const targetGasUrl = gasUrl || getGlobalGasUrl();
+  if (targetGasUrl) {
+    try {
+      const fetchUrl = targetGasUrl.includes('?')
+        ? `${targetGasUrl}&action=getMessages&board_id=${encodeURIComponent(boardId)}`
+        : `${targetGasUrl}?action=getMessages&board_id=${encodeURIComponent(boardId)}`;
+      const res = await fetch(fetchUrl);
+      const data = await res.json();
+      if (data && data.success && Array.isArray(data.messages)) {
+        const remoteMessages: Message[] = data.messages.map((m: any) => ({
+          message_id: String(m.message_id),
+          board_id: String(m.board_id),
+          author: String(m.author || '익명'),
+          content: String(m.content || ''),
+          card_color: String(m.card_color || '#FFF9C4'),
+          font_style: (m.font_style as any) || 'NanumPen',
+          sticker_id: String(m.sticker_id || 'heart'),
+          password: String(m.password || '1111'),
+          is_deleted: m.is_deleted === true || String(m.is_deleted).toUpperCase() === 'TRUE',
+          created_at: String(m.created_at || new Date().toISOString()),
+        }));
+
+        // Merge remote messages into local state
+        const messageMap = new Map<string, Message>();
+        localMessages.forEach((m) => messageMap.set(m.message_id, m));
+        remoteMessages.forEach((m) => {
+          if (!m.is_deleted) {
+            messageMap.set(m.message_id, m);
+          } else {
+            messageMap.delete(m.message_id);
+          }
+        });
+
+        const merged = Array.from(messageMap.values());
+        // Save merged messages to localStorage
+        const otherMessages = all.filter((m) => m.board_id !== boardId);
+        localStorage.setItem(MESSAGES_KEY, JSON.stringify([...otherMessages, ...merged]));
+        return merged;
+      }
+    } catch (e) {
+      // Offline fallback
+    }
+  }
+
+  return localMessages;
 }
 
 export async function createMessage(
